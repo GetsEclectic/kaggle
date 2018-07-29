@@ -103,8 +103,8 @@ def kfold_cv(train_X, train_y, test_X):
     kf = model_selection.KFold(n_splits=5, shuffle=True, random_state=2017)
     pred_test_full = 0
     for dev_index, val_index in kf.split(train_X):
-        dev_X, val_X = train_X.loc[dev_index,:], train_X.loc[val_index,:]
-        dev_y, val_y = train_y[dev_index], train_y[val_index]
+        dev_X, val_X = train_X.iloc[dev_index], train_X.iloc[val_index]
+        dev_y, val_y = train_y.iloc[dev_index], train_y.iloc[val_index]
         pred_test, model, evals_result = run_lgb(dev_X, dev_y, val_X, val_y, test_X)
         pred_test_full += pred_test
     pred_test_full /= 5.
