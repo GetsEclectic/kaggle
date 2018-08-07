@@ -24,12 +24,14 @@ from sklearn.svm import SVR, LinearSVR
 from sklearn.kernel_ridge import KernelRidge
 from sklearn.model_selection import GridSearchCV
 import lightgbm as lgb
+from sklearn.model_selection import KFold
+from sklearn.metrics import mean_squared_error, mean_squared_log_error
 
 
 def create_submission_file(my_pipeline):
     submission = pd.DataFrame()
 
-    for test_data_chunk in pd.read_csv("../input/test.csv", iterator=True, chunksize=1000):
+    for test_data_chunk in pd.read_csv("../input/santander-value-prediction-challenge/test.csv", iterator=True, chunksize=1000):
         test_data_chunk_to_predict = test_data_chunk.drop(['ID'], axis=1)
         submission_preds_chunk = my_pipeline.predict(test_data_chunk_to_predict)
         submission = submission.append(pd.DataFrame({'ID': test_data_chunk.ID, 'target': submission_preds_chunk}))
@@ -39,9 +41,9 @@ def create_submission_file(my_pipeline):
     submission.to_csv('submission.csv', index=False)
 
 
-def rmsle_cv(model,X,y):
-    rmsle = np.sqrt(-cross_val_score(model, X, y, scoring="neg_mean_squared_log_error", cv=5))
-    return rmsle
+def rmse_cv(model,X,y):
+    rmse = np.sqrt(-cross_val_score(model, X, y, scoring="neg_mean_squared_error", cv=5))
+    return rmse
 
 
 class grid():
@@ -113,7 +115,7 @@ def kfold_cv(train_X, train_y, test_X):
 
 
 def main():
-    training_data = pd.read_csv("../input/train.csv")
+    training_data = pd.read_csv("../input/santander-value-prediction-challenge/train.csv")
     y = np.log1p(training_data.target)
     X = training_data.drop(['target', 'ID'], axis=1)
 
@@ -141,10 +143,57 @@ def main():
 
     # create_submission_file(my_pipeline)
 
+
+def rmse(y_true, y_pred):
+    return mean_squared_error(y_true, y_pred) ** .5
+
+
+def calculate_feature_importance():
+    data = pd.read_csv("../input/santander-value-prediction-challenge/train.csv")
+    target = np.log1p(data.target)
+    data.drop(['ID', 'target'], axis=1, inplace=True)
+
+    leak = pd.read_csv('../input/leaky-rows/train_leak.csv')
+    data['leak'] = leak['compiled_leak'].values
+    data['log_leak'] = np.log1p(leak['compiled_leak'].values)
+
+    reg = XGBRegressor(n_estimators=1000)
+    folds = KFold(4, True, 134259)
+    fold_idx = [(trn_, val_) for trn_, val_ in folds.split(data)]
+    scores = []
+
+    nb_values = data.nunique(dropna=False)
+    nb_zeros = (data == 0).astype(np.uint8).sum(axis=0)
+
+    features = [f for f in data.columns if f not in ['log_leak', 'leak', 'target', 'ID']]
+    for _f in features:
+        score = 0
+        for trn_, val_ in fold_idx:
+            reg.fit(
+                data[['log_leak', _f]].iloc[trn_], target.iloc[trn_],
+                eval_set=[(data[['log_leak', _f]].iloc[val_], target.iloc[val_])],
+                eval_metric='rmse',
+                early_stopping_rounds=50,
+                verbose=False
+            )
+            score += rmse(target.iloc[val_], reg.predict(data[['log_leak', _f]].iloc[val_], ntree_limit=reg.best_ntree_limit)) / folds.n_splits
+        scores.append((_f, score))
+
+    report = pd.DataFrame(scores, columns=['feature', 'rmse']).set_index('feature')
+    report['nb_zeros'] = nb_zeros
+    report['nunique'] = nb_values
+    report.sort_values(by='rmse', ascending=True, inplace=True)
+
+    report.to_csv('feature_report.csv', index=True)
+
+
 # adding deskew took forever, aborted it
 # RandomForestRegressor working better than XGBRegressor
 # PCA made it much worse and took a long time
 # try ensembling and/or stacking?
 # grid search took forever
 
-main()
+
+feature_importance = pd.read_csv("../input/xgb-with-indvidual-features/feature_report.csv")
+feature_importance.head()
+
