@@ -148,7 +148,7 @@ def rmse(y_true, y_pred):
     return mean_squared_error(y_true, y_pred) ** .5
 
 
-def calculate_feature_importance():
+def load_train():
     data = pd.read_csv("../input/santander-value-prediction-challenge/train.csv")
     target = np.log1p(data.target)
     data.drop(['ID', 'target'], axis=1, inplace=True)
@@ -156,6 +156,12 @@ def calculate_feature_importance():
     leak = pd.read_csv('../input/leaky-rows/train_leak.csv')
     data['leak'] = leak['compiled_leak'].values
     data['log_leak'] = np.log1p(leak['compiled_leak'].values)
+
+    return data, target
+
+
+def calculate_feature_importance():
+    data, target = load_train()
 
     reg = XGBRegressor(n_estimators=1000)
     folds = KFold(4, True, 134259)
@@ -187,13 +193,111 @@ def calculate_feature_importance():
     report.to_csv('feature_report.csv', index=True)
 
 
+def read_large_csv(filename):
+    large_pd = pd.DataFrame()
+
+    for dataframe_chunk in pd.read_csv(filename, iterator=True, chunksize=1000):
+        large_pd = large_pd.append(dataframe_chunk)
+
+    return large_pd
+
+def lightgbm_with_important_features():
+    data, target = load_train()
+
+    feature_importance = pd.read_csv("../input/xgb-with-individual-features/feature_report.csv")
+    good_features = feature_importance.loc[feature_importance['rmse'] <= 0.7955].feature
+
+    print("before test load")
+    test = read_large_csv('../input/santander-value-prediction-challenge/test.csv')
+    print("after test load")
+
+    tst_leak = pd.read_csv('../input/leaky-rows/test_leak.csv')
+    test['leak'] = tst_leak['compiled_leak']
+    test['log_leak'] = np.log1p(tst_leak['compiled_leak'])
+
+    folds = KFold(n_splits=5, shuffle=True, random_state=1)
+
+    # Use all features for stats
+    features = [f for f in data if f not in ['ID', 'leak', 'log_leak', 'target']]
+    data.replace(0, np.nan, inplace=True)
+    data['log_of_mean'] = np.log1p(data[features].replace(0, np.nan).mean(axis=1))
+    data['mean_of_log'] = np.log1p(data[features]).replace(0, np.nan).mean(axis=1)
+    data['log_of_median'] = np.log1p(data[features].replace(0, np.nan).median(axis=1))
+    data['nb_nans'] = data[features].isnull().sum(axis=1)
+    data['the_sum'] = np.log1p(data[features].sum(axis=1))
+    data['the_std'] = data[features].std(axis=1)
+    data['the_kur'] = data[features].kurtosis(axis=1)
+
+    test.replace(0, np.nan, inplace=True)
+    test['log_of_mean'] = np.log1p(test[features].replace(0, np.nan).mean(axis=1))
+    test['mean_of_log'] = np.log1p(test[features]).replace(0, np.nan).mean(axis=1)
+    test['log_of_median'] = np.log1p(test[features].replace(0, np.nan).median(axis=1))
+    test['nb_nans'] = test[features].isnull().sum(axis=1)
+    test['the_sum'] = np.log1p(test[features].sum(axis=1))
+    test['the_std'] = test[features].std(axis=1)
+    test['the_kur'] = test[features].kurtosis(axis=1)
+
+    # Only use good features, log leak and stats for training
+    features = good_features.tolist()
+    features = features + ['log_leak', 'log_of_mean', 'mean_of_log', 'log_of_median', 'nb_nans', 'the_sum', 'the_std', 'the_kur']
+    dtrain = lgb.Dataset(data=data[features],
+                         label=target, free_raw_data=False)
+    test['target'] = 0
+
+    dtrain.construct()
+    oof_preds = np.zeros(data.shape[0])
+
+    for trn_idx, val_idx in folds.split(data):
+        lgb_params = {
+            'objective': 'regression',
+            'num_leaves': 58,
+            'subsample': 0.6143,
+            'colsample_bytree': 0.6453,
+            'min_split_gain': np.power(10, -2.5988),
+            'reg_alpha': np.power(10, -2.2887),
+            'reg_lambda': np.power(10, 1.7570),
+            'min_child_weight': np.power(10, -0.1477),
+            'verbose': -1,
+            'seed': 3,
+            'boosting_type': 'gbdt',
+            'max_depth': -1,
+            'learning_rate': 0.05,
+            'metric': 'l2',
+        }
+
+        clf = lgb.train(
+            params=lgb_params,
+            train_set=dtrain.subset(trn_idx),
+            valid_sets=dtrain.subset(val_idx),
+            num_boost_round=10000,
+            early_stopping_rounds=100,
+            verbose_eval=0
+        )
+
+        oof_preds[val_idx] = clf.predict(dtrain.data.iloc[val_idx])
+        test['target'] += clf.predict(test[features]) / folds.n_splits
+        print(mean_squared_error(target.iloc[val_idx],
+                                 oof_preds[val_idx]) ** .5)
+
+    data['predictions'] = oof_preds
+    data.loc[data['leak'].notnull(), 'predictions'] = np.log1p(data.loc[data['leak'].notnull(), 'leak'])
+    print('OOF SCORE : %9.6f'
+          % (mean_squared_error(target, oof_preds) ** .5))
+    print('OOF SCORE with LEAK : %9.6f'
+          % (mean_squared_error(target, data['predictions']) ** .5))
+
+    submission = pd.DataFrame({'ID': test.ID, 'target': test.target.apply(np.expm1)})
+
+    print(submission.describe())
+
+    submission.to_csv('submission.csv', index=False)
+
+
+lightgbm_with_important_features()
+
 # adding deskew took forever, aborted it
 # RandomForestRegressor working better than XGBRegressor
 # PCA made it much worse and took a long time
 # try ensembling and/or stacking?
 # grid search took forever
-
-
-feature_importance = pd.read_csv("../input/xgb-with-indvidual-features/feature_report.csv")
-feature_importance.head()
 
