@@ -17,6 +17,14 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from scipy.stats import skew, spearmanr
 from sklearn.preprocessing import RobustScaler
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, ExtraTreesRegressor
+import sklearn.ensemble as ensemble
+import sklearn.linear_model as linear_model
+import sklearn.naive_bayes as naive_bayes
+import sklearn.svm as svm
+import sklearn.gaussian_process as gaussian_process
+import sklearn.tree as tree
+import sklearn.neighbors as neighbors
+import sklearn.discriminant_analysis as discriminant_analysis
 from scipy.stats import describe
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet, SGDRegressor, BayesianRidge
@@ -25,6 +33,7 @@ from sklearn.kernel_ridge import KernelRidge
 from sklearn.model_selection import GridSearchCV
 import lightgbm as lgb
 from sklearn.model_selection import KFold
+import sklearn.model_selection as model_selection
 from sklearn.metrics import mean_squared_error, mean_squared_log_error
 
 
@@ -160,6 +169,36 @@ def load_train():
     return data, target
 
 
+def load_train_good_features():
+    data = pd.read_csv("../input/santander-value-prediction-challenge/train.csv")
+    target = np.log1p(data.target)
+    data.drop(['ID', 'target'], axis=1, inplace=True)
+
+    leak = pd.read_csv('../input/leaky-rows/train_leak.csv')
+    data['leak'] = leak['compiled_leak'].values
+    data['log_leak'] = np.log1p(leak['compiled_leak'].values)
+
+    feature_importance = pd.read_csv("../input/xgb-with-individual-features/feature_report.csv")
+    good_features = feature_importance.loc[feature_importance['rmse'] <= 0.7955].feature
+
+    # Use all features for stats
+    features = [f for f in data if f not in ['ID', 'leak', 'log_leak', 'target']]
+    data.replace(0, np.nan, inplace=True)
+    data['log_of_mean'] = np.log1p(data[features].replace(0, np.nan).mean(axis=1))
+    data['mean_of_log'] = np.log1p(data[features]).replace(0, np.nan).mean(axis=1)
+    data['log_of_median'] = np.log1p(data[features].replace(0, np.nan).median(axis=1))
+    data['nb_nans'] = data[features].isnull().sum(axis=1)
+    data['the_sum'] = np.log1p(data[features].sum(axis=1))
+    data['the_std'] = data[features].std(axis=1)
+    data['the_kur'] = data[features].kurtosis(axis=1)
+
+    # Only use good features, log leak and stats for training
+    features = good_features.tolist()
+    features = features + ['log_leak', 'log_of_mean', 'mean_of_log', 'log_of_median', 'nb_nans', 'the_sum', 'the_std', 'the_kur']
+
+    return data[features], target
+
+
 def calculate_feature_importance():
     data, target = load_train()
 
@@ -202,50 +241,15 @@ def read_large_csv(filename):
     return large_pd
 
 def lightgbm_with_important_features():
-    data, target = load_train()
+    data, target = load_train_good_features()
 
-    feature_importance = pd.read_csv("../input/xgb-with-individual-features/feature_report.csv")
-    good_features = feature_importance.loc[feature_importance['rmse'] <= 0.7955].feature
-
-    print("before test load")
-    test = read_large_csv('../input/santander-value-prediction-challenge/test.csv')
-    print("after test load")
-
-    tst_leak = pd.read_csv('../input/leaky-rows/test_leak.csv')
-    test['leak'] = tst_leak['compiled_leak']
-    test['log_leak'] = np.log1p(tst_leak['compiled_leak'])
-
-    folds = KFold(n_splits=5, shuffle=True, random_state=1)
-
-    # Use all features for stats
-    features = [f for f in data if f not in ['ID', 'leak', 'log_leak', 'target']]
-    data.replace(0, np.nan, inplace=True)
-    data['log_of_mean'] = np.log1p(data[features].replace(0, np.nan).mean(axis=1))
-    data['mean_of_log'] = np.log1p(data[features]).replace(0, np.nan).mean(axis=1)
-    data['log_of_median'] = np.log1p(data[features].replace(0, np.nan).median(axis=1))
-    data['nb_nans'] = data[features].isnull().sum(axis=1)
-    data['the_sum'] = np.log1p(data[features].sum(axis=1))
-    data['the_std'] = data[features].std(axis=1)
-    data['the_kur'] = data[features].kurtosis(axis=1)
-
-    test.replace(0, np.nan, inplace=True)
-    test['log_of_mean'] = np.log1p(test[features].replace(0, np.nan).mean(axis=1))
-    test['mean_of_log'] = np.log1p(test[features]).replace(0, np.nan).mean(axis=1)
-    test['log_of_median'] = np.log1p(test[features].replace(0, np.nan).median(axis=1))
-    test['nb_nans'] = test[features].isnull().sum(axis=1)
-    test['the_sum'] = np.log1p(test[features].sum(axis=1))
-    test['the_std'] = test[features].std(axis=1)
-    test['the_kur'] = test[features].kurtosis(axis=1)
-
-    # Only use good features, log leak and stats for training
-    features = good_features.tolist()
-    features = features + ['log_leak', 'log_of_mean', 'mean_of_log', 'log_of_median', 'nb_nans', 'the_sum', 'the_std', 'the_kur']
-    dtrain = lgb.Dataset(data=data[features],
+    dtrain = lgb.Dataset(data=data,
                          label=target, free_raw_data=False)
-    test['target'] = 0
 
     dtrain.construct()
     oof_preds = np.zeros(data.shape[0])
+
+    folds = KFold(n_splits=5, shuffle=True, random_state=1)
 
     for trn_idx, val_idx in folds.split(data):
         lgb_params = {
@@ -275,25 +279,121 @@ def lightgbm_with_important_features():
         )
 
         oof_preds[val_idx] = clf.predict(dtrain.data.iloc[val_idx])
-        test['target'] += clf.predict(test[features]) / folds.n_splits
         print(mean_squared_error(target.iloc[val_idx],
                                  oof_preds[val_idx]) ** .5)
 
     data['predictions'] = oof_preds
-    data.loc[data['leak'].notnull(), 'predictions'] = np.log1p(data.loc[data['leak'].notnull(), 'leak'])
-    print('OOF SCORE : %9.6f'
-          % (mean_squared_error(target, oof_preds) ** .5))
+
     print('OOF SCORE with LEAK : %9.6f'
           % (mean_squared_error(target, data['predictions']) ** .5))
 
-    submission = pd.DataFrame({'ID': test.ID, 'target': test.target.apply(np.expm1)})
+    # test = read_large_csv('../input/santander-value-prediction-challenge/test.csv')
+    # tst_leak = pd.read_csv('../input/leaky-rows/test_leak.csv')
+    # test['leak'] = tst_leak['compiled_leak']
+    # test['log_leak'] = np.log1p(tst_leak['compiled_leak'])
 
-    print(submission.describe())
+    # test.replace(0, np.nan, inplace=True)
+    # test['log_of_mean'] = np.log1p(test[features].replace(0, np.nan).mean(axis=1))
+    # test['mean_of_log'] = np.log1p(test[features]).replace(0, np.nan).mean(axis=1)
+    # test['log_of_median'] = np.log1p(test[features].replace(0, np.nan).median(axis=1))
+    # test['nb_nans'] = test[features].isnull().sum(axis=1)
+    # test['the_sum'] = np.log1p(test[features].sum(axis=1))
+    # test['the_std'] = test[features].std(axis=1)
+    # test['the_kur'] = test[features].kurtosis(axis=1)
 
-    submission.to_csv('submission.csv', index=False)
+    # submission = pd.DataFrame({'ID': test.ID, 'target': test.target.apply(np.expm1)})
+
+    # print(submission.describe())
+
+    # submission.to_csv('submission.csv', index=False)
 
 
-lightgbm_with_important_features()
+def model_comparison():
+    data, target = load_train_good_features()
+
+    MLA = [
+        #Ensemble Methods
+        ensemble.AdaBoostRegressor(),
+        ensemble.BaggingRegressor(),
+        ensemble.ExtraTreesRegressor(),
+        ensemble.GradientBoostingRegressor(),
+        ensemble.RandomForestRegressor(),
+
+        #Gaussian Processes
+        gaussian_process.GaussianProcessRegressor(),
+
+        #GLM
+        linear_model.LogisticRegression(),
+        linear_model.PassiveAggressiveRegressor(),
+        linear_model.Ridge(),
+        linear_model.SGDRegressor(),
+        linear_model.Perceptron(),
+
+        #Navies Bayes
+        naive_bayes.BernoulliNB(),
+        naive_bayes.GaussianNB(),
+
+        #Nearest Neighbor
+        neighbors.KNeighborsRegressor(),
+
+        #SVM
+        svm.SVR(),
+        svm.NuSVR(),
+        svm.LinearSVR(),
+
+        #Trees
+        tree.DecisionTreeRegressor(),
+        tree.ExtraTreeRegressor(),
+
+        #xgboost: http://xgboost.readthedocs.io/en/latest/model.html
+        XGBRegressor()
+    ]
+
+
+
+    #split dataset in cross-validation with this splitter class: http://scikit-learn.org/stable/modules/generated/sklearn.model_selection.ShuffleSplit.html#sklearn.model_selection.ShuffleSplit
+    #note: this is an alternative to train_test_split
+    cv_split = model_selection.ShuffleSplit(n_splits = 10, test_size = .3, train_size = .6, random_state = 0 ) # run model 10x with 60/30 split intentionally leaving out 10%
+
+    #create table to compare MLA metrics
+    MLA_columns = ['MLA Name', 'MLA Parameters','MLA Train Accuracy Mean', 'MLA Test Accuracy Mean', 'MLA Test Accuracy 3*STD' ,'MLA Time']
+    MLA_compare = pd.DataFrame(columns = MLA_columns)
+
+    #create table to compare MLA predictions
+    MLA_predict = target
+
+    #index through MLA and save performance to table
+    row_index = 0
+    for alg in MLA:
+
+        #set name and parameters
+        MLA_name = alg.__class__.__name__
+        MLA_compare.loc[row_index, 'MLA Name'] = MLA_name
+        MLA_compare.loc[row_index, 'MLA Parameters'] = str(alg.get_params())
+
+        #score model with cross validation: http://scikit-learn.org/stable/modules/generated/sklearn.model_selection.cross_validate.html#sklearn.model_selection.cross_validate
+        cv_results = model_selection.cross_validate(alg, data, target, cv  = cv_split)
+
+        MLA_compare.loc[row_index, 'MLA Time'] = cv_results['fit_time'].mean()
+        MLA_compare.loc[row_index, 'MLA Train Accuracy Mean'] = cv_results['train_score'].mean()
+        MLA_compare.loc[row_index, 'MLA Test Accuracy Mean'] = cv_results['test_score'].mean()
+        #if this is a non-bias random sample, then +/-3 standard deviations (std) from the mean, should statistically capture 99.7% of the subsets
+        MLA_compare.loc[row_index, 'MLA Test Accuracy 3*STD'] = cv_results['test_score'].std()*3   #let's know the worst that can happen!
+
+
+        #save MLA predictions - see section 6 for usage
+        alg.fit(data, target)
+        MLA_predict[MLA_name] = alg.predict(data)
+
+        row_index+=1
+
+
+    #print and sort table: https://pandas.pydata.org/pandas-docs/stable/generated/pandas.DataFrame.sort_values.html
+    MLA_compare.sort_values(by = ['MLA Test Accuracy Mean'], ascending = False, inplace = True)
+    MLA_compare
+
+
+model_comparison()
 
 # adding deskew took forever, aborted it
 # RandomForestRegressor working better than XGBRegressor
