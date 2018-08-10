@@ -376,7 +376,7 @@ def model_comparison():
 
 
     #print and sort table: https://pandas.pydata.org/pandas-docs/stable/generated/pandas.DataFrame.sort_values.html
-    MLA_compare.sort_values(by = ['MLA Test Accuracy Mean'], ascending = False, inplace = True)
+    MLA_compare.sort_values(by = ['MLA Test Accuracy Mean'], inplace = True)
     MLA_compare.to_csv('mla_comparison.csv', index=True)
     print(MLA_compare)
 
