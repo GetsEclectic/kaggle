@@ -34,7 +34,7 @@ from sklearn.model_selection import GridSearchCV
 import lightgbm as lgb
 from sklearn.model_selection import KFold
 import sklearn.model_selection as model_selection
-from sklearn.metrics import mean_squared_error, mean_squared_log_error
+from sklearn.metrics import mean_squared_error, mean_squared_log_error, make_scorer
 
 
 def create_submission_file(my_pipeline):
@@ -363,7 +363,8 @@ def model_comparison():
         MLA_compare.loc[row_index, 'MLA Parameters'] = str(alg.get_params())
 
         #score model with cross validation: http://scikit-learn.org/stable/modules/generated/sklearn.model_selection.cross_validate.html#sklearn.model_selection.cross_validate
-        cv_results = model_selection.cross_validate(alg, data, target, cv  = cv_split)
+        rmse_scorer = make_scorer(rmse)
+        cv_results = model_selection.cross_validate(alg, data, target, cv  = cv_split, scoring = rmse_scorer)
 
         MLA_compare.loc[row_index, 'MLA Time'] = cv_results['fit_time'].mean()
         MLA_compare.loc[row_index, 'MLA Train Accuracy Mean'] = cv_results['train_score'].mean()
@@ -376,7 +377,7 @@ def model_comparison():
 
     #print and sort table: https://pandas.pydata.org/pandas-docs/stable/generated/pandas.DataFrame.sort_values.html
     MLA_compare.sort_values(by = ['MLA Test Accuracy Mean'], ascending = False, inplace = True)
-    MLA_compare.to_csv('../input/mla_comparison.csv', index=True)
+    MLA_compare.to_csv('mla_comparison.csv', index=True)
     print(MLA_compare)
 
 
@@ -387,4 +388,3 @@ model_comparison()
 # PCA made it much worse and took a long time
 # try ensembling and/or stacking?
 # grid search took forever
-
