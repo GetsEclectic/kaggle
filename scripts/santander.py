@@ -1,50 +1,49 @@
 # This Python 3 environment comes with many helpful analytics libraries installed
 # It is defined by the kaggle/python docker image: https://github.com/kaggle/docker-python
 # For example, here's several helpful packages to load in
-import timeit
 
-import numpy as np # linear algebra
-import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
-from sklearn import model_selection
-from sklearn.feature_selection import VarianceThreshold
-from sklearn.pipeline import Pipeline
-from sklearn.model_selection import cross_val_score
-from xgboost import XGBRegressor
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_log_error
-from math import sqrt
-from sklearn.base import BaseEstimator, TransformerMixin
-from scipy.stats import skew, spearmanr
-from sklearn.preprocessing import RobustScaler
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, ExtraTreesRegressor
-import sklearn.ensemble as ensemble
-import sklearn.linear_model as linear_model
-import sklearn.naive_bayes as naive_bayes
-import sklearn.svm as svm
-import sklearn.gaussian_process as gaussian_process
-import sklearn.tree as tree
-import sklearn.neighbors as neighbors
-import sklearn.discriminant_analysis as discriminant_analysis
-from scipy.stats import describe
-from sklearn.decomposition import PCA
-from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet, SGDRegressor, BayesianRidge
-from sklearn.svm import SVR, LinearSVR
-from sklearn.kernel_ridge import KernelRidge
-from sklearn.model_selection import GridSearchCV
 import lightgbm as lgb
+import numpy as np  # linear algebra
+import pandas as pd  # data processing, CSV file I/O (e.g. pd.read_csv)
+import sklearn.ensemble as ensemble
+import sklearn.gaussian_process as gaussian_process
+import sklearn.linear_model as linear_model
+import sklearn.neighbors as neighbors
+import sklearn.svm as svm
+import sklearn.tree as tree
+from scipy.stats import spearmanr
+from sklearn import model_selection
+from sklearn.metrics import mean_squared_error, make_scorer
+from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import KFold
-import sklearn.model_selection as model_selection
-from sklearn.metrics import mean_squared_error, mean_squared_log_error, make_scorer
+from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import train_test_split
 from skopt import BayesSearchCV
+from xgboost import XGBRegressor
 
 
-def create_submission_file(my_pipeline):
-    submission = pd.DataFrame()
+def create_submission_file(my_pipeline, features):
+    test = read_large_csv('../input/santander-value-prediction-challenge/test.csv')
+    tst_leak = pd.read_csv('../input/leaky-rows/test_leak.csv')
+    test['leak'] = tst_leak['compiled_leak']
+    test['log_leak'] = np.log1p(tst_leak['compiled_leak'])
 
-    for test_data_chunk in pd.read_csv("../input/santander-value-prediction-challenge/test.csv", iterator=True, chunksize=1000):
-        test_data_chunk_to_predict = test_data_chunk.drop(['ID'], axis=1)
-        submission_preds_chunk = my_pipeline.predict(test_data_chunk_to_predict)
-        submission = submission.append(pd.DataFrame({'ID': test_data_chunk.ID, 'target': submission_preds_chunk}))
+    features = [f for f in features if f not in ['ID', 'leak', 'log_leak', 'target', 'log_leak', 'log_of_mean', 'mean_of_log', 'log_of_median', 'nb_nans', 'the_sum', 'the_std', 'the_kur']]
+
+    test.replace(0, np.nan, inplace=True)
+    test['log_of_mean'] = np.log1p(test[features].replace(0, np.nan).mean(axis=1))
+    test['mean_of_log'] = np.log1p(test[features]).replace(0, np.nan).mean(axis=1)
+    test['log_of_median'] = np.log1p(test[features].replace(0, np.nan).median(axis=1))
+    test['nb_nans'] = test[features].isnull().sum(axis=1)
+    test['the_sum'] = np.log1p(test[features].sum(axis=1))
+    test['the_std'] = test[features].std(axis=1)
+    test['the_kur'] = test[features].kurtosis(axis=1)
+
+    features = features + ['log_leak', 'log_of_mean', 'mean_of_log', 'log_of_median', 'nb_nans', 'the_sum', 'the_std', 'the_kur']
+
+    preds = my_pipeline.predict(test[features])
+
+    submission = pd.DataFrame({'ID': test.ID, 'target': np.expm1(preds)})
 
     print(submission.describe())
 
@@ -197,7 +196,7 @@ def load_train_good_features():
     features = good_features.tolist()
     features = features + ['log_leak', 'log_of_mean', 'mean_of_log', 'log_of_median', 'nb_nans', 'the_sum', 'the_std', 'the_kur']
 
-    return data[features], target
+    return data[features], target, features
 
 
 def calculate_feature_importance():
@@ -234,9 +233,9 @@ def calculate_feature_importance():
 
 
 def xgb_with_important_features():
-    data, target = load_train_good_features()
+    data, target, features = load_train_good_features()
 
-    reg = XGBRegressor(n_estimators=1000)
+    reg = XGBRegressor(colsample_bylevel= 0.861134571342863, colsample_bytree= 0.8549681199200161, gamma= 8.711600566125166e-06, learning_rate= 0.04074349135889144, max_delta_step= 9, max_depth= 5, min_child_weight= 1, n_estimators= 1000, reg_alpha= 1.4612464562771088e-06, reg_lambda= 0.13441711873251744, scale_pos_weight= 5.136942416966736, subsample= 0.4294081846730142)
     folds = KFold(n_splits=5, shuffle=True, random_state=1)
     fold_idx = [(trn_, val_) for trn_, val_ in folds.split(data)]
 
@@ -252,6 +251,8 @@ def xgb_with_important_features():
         score += rmse(target.iloc[val_], reg.predict(data.iloc[val_], ntree_limit=reg.best_ntree_limit)) / folds.n_splits
 
     print("rmse: " + str(score))
+
+    # create_submission_file(reg, features)
 
 
 def read_large_csv(filename):
@@ -334,22 +335,26 @@ def lightgbm_with_important_features():
 def bayes_search():
     data, target = load_train_good_features()
 
+    nrmse_scorer = make_scorer(lambda x, y: rmse(x, y) * -1)
+
     bayes_cv_tuner = BayesSearchCV(
-        estimator = lgb.LGBMRegressor(objective='regression', boosting_type='gbdt', subsample=0.6143), #colsample_bytree=0.6453, subsample=0.6143
+        estimator = XGBRegressor(),
         search_spaces = {
             'learning_rate': (0.01, 1.0, 'log-uniform'),
-            'num_leaves': (10, 100),
-            'max_depth': (0, 50),
-            'min_child_samples': (0, 50),
-            'max_bin': (100, 1000),
-            'subsample_freq': (0, 10),
             'min_child_weight': (0, 10),
+            'max_depth': (0, 50),
+            'max_delta_step': (0, 20),
+            'subsample': (0.01, 1.0, 'uniform'),
+            'colsample_bytree': (0.01, 1.0, 'uniform'),
+            'colsample_bylevel': (0.01, 1.0, 'uniform'),
             'reg_lambda': (1e-9, 1000, 'log-uniform'),
             'reg_alpha': (1e-9, 1.0, 'log-uniform'),
-            'scale_pos_weight': (1e-6, 500, 'log-uniform'),
-            'n_estimators': (50, 150),
+            'gamma': (1e-9, 0.5, 'log-uniform'),
+            'min_child_weight': (0, 5),
+            'n_estimators': (50, 2000),
+            'scale_pos_weight': (1e-6, 500, 'log-uniform')
         },
-        scoring = 'neg_mean_squared_log_error',
+        scoring = nrmse_scorer,
         cv = KFold(
             n_splits=5,
             shuffle=True,
