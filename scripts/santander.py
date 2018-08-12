@@ -265,7 +265,7 @@ def read_large_csv(filename):
 
 
 def lightgbm_with_important_features():
-    data, target = load_train_good_features()
+    data, target, features = load_train_good_features()
 
     dtrain = lgb.Dataset(data=data,
                          label=target, free_raw_data=False)
@@ -333,7 +333,7 @@ def lightgbm_with_important_features():
 
 
 def bayes_search():
-    data, target = load_train_good_features()
+    data, target, features = load_train_good_features()
 
     nrmse_scorer = make_scorer(lambda x, y: rmse(x, y) * -1)
 
@@ -355,13 +355,9 @@ def bayes_search():
             'scale_pos_weight': (1e-6, 500, 'log-uniform')
         },
         scoring = nrmse_scorer,
-        cv = KFold(
-            n_splits=5,
-            shuffle=True,
-            random_state=42
-        ),
+        cv = model_selection.ShuffleSplit(n_splits = 10, test_size = .3, train_size = .6, random_state = 0 ),
         n_jobs = 1,
-        n_iter = 100,
+        n_iter = 10000,
         verbose = 0,
         refit = True,
         random_state = 42
@@ -392,7 +388,7 @@ def bayes_search():
 
 
 def model_comparison():
-    data, target = load_train_good_features()
+    data, target, features = load_train_good_features()
 
     MLA = [
         #Ensemble Methods
