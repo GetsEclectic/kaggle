@@ -35,6 +35,7 @@ import lightgbm as lgb
 from sklearn.model_selection import KFold
 import sklearn.model_selection as model_selection
 from sklearn.metrics import mean_squared_error, mean_squared_log_error, make_scorer
+from skopt import BayesSearchCV
 
 
 def create_submission_file(my_pipeline):
@@ -183,7 +184,7 @@ def load_train_good_features():
 
     # Use all features for stats
     features = [f for f in data if f not in ['ID', 'leak', 'log_leak', 'target']]
-    # data.replace(0, np.nan, inplace=True)
+    data.replace(0, np.nan, inplace=True)
     data['log_of_mean'] = np.log1p(data[features].replace(0, np.nan).mean(axis=1))
     data['mean_of_log'] = np.log1p(data[features]).replace(0, np.nan).mean(axis=1)
     data['log_of_median'] = np.log1p(data[features].replace(0, np.nan).median(axis=1))
@@ -194,7 +195,7 @@ def load_train_good_features():
 
     # Only use good features, log leak and stats for training
     features = good_features.tolist()
-    features = features + ['log_of_mean', 'mean_of_log', 'log_of_median', 'nb_nans', 'the_sum', 'the_std', 'the_kur']
+    features = features + ['log_leak', 'log_of_mean', 'mean_of_log', 'log_of_median', 'nb_nans', 'the_sum', 'the_std', 'the_kur']
 
     return data[features], target
 
@@ -239,6 +240,7 @@ def read_large_csv(filename):
         large_pd = large_pd.append(dataframe_chunk)
 
     return large_pd
+
 
 def lightgbm_with_important_features():
     data, target = load_train_good_features()
@@ -308,6 +310,61 @@ def lightgbm_with_important_features():
     # submission.to_csv('submission.csv', index=False)
 
 
+def bayes_search():
+    data, target = load_train_good_features()
+
+    bayes_cv_tuner = BayesSearchCV(
+        estimator = lgb.LGBMRegressor(objective='regression', boosting_type='gbdt', subsample=0.6143), #colsample_bytree=0.6453, subsample=0.6143
+        search_spaces = {
+            'learning_rate': (0.01, 1.0, 'log-uniform'),
+            'num_leaves': (10, 100),
+            'max_depth': (0, 50),
+            'min_child_samples': (0, 50),
+            'max_bin': (100, 1000),
+            'subsample_freq': (0, 10),
+            'min_child_weight': (0, 10),
+            'reg_lambda': (1e-9, 1000, 'log-uniform'),
+            'reg_alpha': (1e-9, 1.0, 'log-uniform'),
+            'scale_pos_weight': (1e-6, 500, 'log-uniform'),
+            'n_estimators': (50, 150),
+        },
+        scoring = 'neg_mean_squared_log_error',
+        cv = KFold(
+            n_splits=5,
+            shuffle=True,
+            random_state=42
+        ),
+        n_jobs = 1,
+        n_iter = 100,
+        verbose = 0,
+        refit = True,
+        random_state = 42
+    )
+
+
+    def status_print(optim_result):
+        """Status callback durring bayesian hyperparameter search"""
+
+        # Get all the models tested so far in DataFrame format
+        all_models = pd.DataFrame(bayes_cv_tuner.cv_results_)
+
+        # Get current parameters and the best parameters
+        best_params = pd.Series(bayes_cv_tuner.best_params_)
+        print('Model #{}\nBest MSE: {}\nBest params: {}\n'.format(
+            len(all_models),
+            np.round(bayes_cv_tuner.best_score_, 4),
+            bayes_cv_tuner.best_params_
+        ))
+
+        # Save all model results
+        clf_name = bayes_cv_tuner.estimator.__class__.__name__
+        all_models.to_csv(clf_name+"_cv_results.csv")
+
+
+    # Fit the model
+    result = bayes_cv_tuner.fit(data, target, callback=status_print)
+
+
 def model_comparison():
     data, target = load_train_good_features()
 
@@ -340,7 +397,8 @@ def model_comparison():
         tree.ExtraTreeRegressor(),
 
         #xgboost: http://xgboost.readthedocs.io/en/latest/model.html
-        XGBRegressor()
+        XGBRegressor(),
+        lgb.LGBMRegressor()
     ]
 
 
@@ -381,7 +439,7 @@ def model_comparison():
     print(MLA_compare)
 
 
-model_comparison()
+lightgbm_with_important_features()
 
 # adding deskew took forever, aborted it
 # RandomForestRegressor working better than XGBRegressor
