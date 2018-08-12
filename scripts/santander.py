@@ -233,6 +233,27 @@ def calculate_feature_importance():
     report.to_csv('feature_report.csv', index=True)
 
 
+def xgb_with_important_features():
+    data, target = load_train_good_features()
+
+    reg = XGBRegressor(n_estimators=1000)
+    folds = KFold(n_splits=5, shuffle=True, random_state=1)
+    fold_idx = [(trn_, val_) for trn_, val_ in folds.split(data)]
+
+    score = 0
+    for trn_, val_ in fold_idx:
+        reg.fit(
+            data.iloc[trn_], target.iloc[trn_],
+            eval_set=[(data.iloc[val_], target.iloc[val_])],
+            eval_metric='rmse',
+            early_stopping_rounds=50,
+            verbose=False
+        )
+        score += rmse(target.iloc[val_], reg.predict(data.iloc[val_], ntree_limit=reg.best_ntree_limit)) / folds.n_splits
+
+    print("rmse: " + str(score))
+
+
 def read_large_csv(filename):
     large_pd = pd.DataFrame()
 
@@ -439,7 +460,7 @@ def model_comparison():
     print(MLA_compare)
 
 
-lightgbm_with_important_features()
+xgb_with_important_features()
 
 # adding deskew took forever, aborted it
 # RandomForestRegressor working better than XGBRegressor
