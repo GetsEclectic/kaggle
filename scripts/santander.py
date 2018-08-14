@@ -226,25 +226,7 @@ def lightgbm_with_important_features():
     print('OOF SCORE with LEAK : %9.6f'
           % (mean_squared_error(target, data['predictions']) ** .5))
 
-    # test = read_large_csv('../input/santander-value-prediction-challenge/test.csv')
-    # tst_leak = pd.read_csv('../input/leaky-rows/test_leak.csv')
-    # test['leak'] = tst_leak['compiled_leak']
-    # test['log_leak'] = np.log1p(tst_leak['compiled_leak'])
-
-    # test.replace(0, np.nan, inplace=True)
-    # test['log_of_mean'] = np.log1p(test[features].replace(0, np.nan).mean(axis=1))
-    # test['mean_of_log'] = np.log1p(test[features]).replace(0, np.nan).mean(axis=1)
-    # test['log_of_median'] = np.log1p(test[features].replace(0, np.nan).median(axis=1))
-    # test['nb_nans'] = test[features].isnull().sum(axis=1)
-    # test['the_sum'] = np.log1p(test[features].sum(axis=1))
-    # test['the_std'] = test[features].std(axis=1)
-    # test['the_kur'] = test[features].kurtosis(axis=1)
-
-    # submission = pd.DataFrame({'ID': test.ID, 'target': test.target.apply(np.expm1)})
-
-    # print(submission.describe())
-
-    # submission.to_csv('submission.csv', index=False)
+    # create_submission_file(clf, features)
 
 
 def bayes_search():
