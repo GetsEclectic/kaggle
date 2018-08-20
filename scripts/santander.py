@@ -351,6 +351,8 @@ def model_comparison():
         #GLM
         linear_model.PassiveAggressiveRegressor(),
         linear_model.Ridge(),
+        linear_model.Lasso(),
+        linear_model.ElasticNet(),
         linear_model.SGDRegressor(),
 
         #Nearest Neighbor
