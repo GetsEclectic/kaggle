@@ -307,8 +307,8 @@ class ImportantFeatureFilter(BaseEstimator, TransformerMixin):
 
 class StandardScalerWithNaNSupport(BaseEstimator, TransformerMixin):
     def __init__(self):
-        self.means = 0
-        self.stds = 0
+        self.means = None
+        self.stds = None
 
     def fit(self, X, y=None):
         self.means = np.nanmean(X, axis=0)
