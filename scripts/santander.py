@@ -77,17 +77,6 @@ def load_train():
     return data, target
 
 
-def load_train_good_features():
-    data = pd.read_csv("../input/santander-value-prediction-challenge/train.csv")
-    target = np.log1p(data.target)
-    data.drop(['ID', 'target'], axis=1, inplace=True)
-
-    leak = pd.read_csv('../input/leaky-rows/train_leak.csv')
-    data['log_leak'] = np.log1p(leak['compiled_leak'].values)
-
-    return data, target
-
-
 def calculate_feature_importance():
     data, target = load_train()
 
@@ -122,7 +111,7 @@ def calculate_feature_importance():
 
 
 def xgb_with_important_features():
-    data, target = load_train_good_features()
+    data, target = load_train()
 
     pipeline = create_pipeline()
 
@@ -158,7 +147,7 @@ def read_large_csv(filename):
 
 
 def lightgbm_with_important_features():
-    data, target = load_train_good_features()
+    data, target = load_train()
 
     pipeline = create_pipeline()
 
@@ -212,7 +201,7 @@ def lightgbm_with_important_features():
 
 
 def bayes_search():
-    data, target = load_train_good_features()
+    data, target = load_train()
 
     pipeline = create_pipeline()
 
@@ -324,7 +313,7 @@ def create_pipeline():
 
 
 def model_comparison():
-    data, target = load_train_good_features()
+    data, target = load_train()
 
     pipeline = create_pipeline()
 
