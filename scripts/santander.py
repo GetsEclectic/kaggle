@@ -17,7 +17,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics import mean_squared_error, make_scorer
 from sklearn.model_selection import KFold
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, Imputer
 from skopt import BayesSearchCV
 from xgboost import XGBRegressor
 
@@ -318,6 +318,19 @@ class StandardScalerWithNaNSupport(BaseEstimator, TransformerMixin):
     def transform(self, X):
         X = X - self.means
         X = X / self.stds
+        return X
+
+
+class DataframeImputer(BaseEstimator, TransformerMixin):
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        means = np.nanmean(X, axis=0)
+        for feature in X:
+            X[feature].replace(np.nan, means[0], inplace=True)
+            means = means[1:]
+
         return X
 
 
