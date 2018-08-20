@@ -299,7 +299,7 @@ class ImportantFeatureFilter(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X):
-        good_features = self.feature_importance.loc[self.feature_importance['rmse'] <= 0.7955].feature
+        good_features = self.feature_importance.loc[self.feature_importance['rmse'] <= self.rmseLimit].feature
         good_features = good_features.tolist() + ['log_leak']
         return X[good_features]
 
