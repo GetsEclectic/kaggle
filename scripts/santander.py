@@ -2,7 +2,7 @@
 # It is defined by the kaggle/python docker image: https://github.com/kaggle/docker-python
 # For example, here's several helpful packages to load in
 
-import lightgbm as lgb
+# import lightgbm as lgb
 import numpy as np
 import pandas as pd
 import sklearn.ensemble as ensemble
@@ -17,6 +17,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics import mean_squared_error, make_scorer
 from sklearn.model_selection import KFold
 from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 from skopt import BayesSearchCV
 from xgboost import XGBRegressor
 
@@ -117,7 +118,7 @@ def xgb_with_important_features():
 
     data = pipeline.fit_transform(data)
 
-    reg = XGBRegressor(colsample_bylevel= 0.861134571342863, colsample_bytree= 0.8549681199200161, gamma= 8.711600566125166e-06, learning_rate= 0.04074349135889144, max_delta_step= 9, max_depth= 5, min_child_weight= 1, n_estimators= 1000, reg_alpha= 1.4612464562771088e-06, reg_lambda= 0.13441711873251744, scale_pos_weight= 5.136942416966736, subsample= 0.4294081846730142)
+    reg = XGBRegressor(n_estimators= 1000)
     folds = KFold(n_splits=5, shuffle=True, random_state=1)
     fold_idx = [(trn_, val_) for trn_, val_ in folds.split(data)]
 
@@ -304,11 +305,28 @@ class ImportantFeatureFilter(BaseEstimator, TransformerMixin):
         return X[good_features]
 
 
+class StandardScalerWithNaNSupport(BaseEstimator, TransformerMixin):
+    def __init__(self):
+        self.means = 0
+        self.stds = 0
+
+    def fit(self, X, y=None):
+        self.means = np.nanmean(X, axis=0)
+        self.stds = np.nanstd(X, axis=0)
+        return self
+
+    def transform(self, X):
+        X = X - self.means
+        X = X / self.stds
+        return X
+
+
 def create_pipeline():
     return Pipeline([
         ('filter_important_features', ImportantFeatureFilter()),
         ('add_stats', StatisticsAdder(columns_to_exclude=['ID', 'leak', 'log_leak', 'target'])),
-        ('zeros_to_nans', ZeroToNaNer())
+        ('scale', StandardScalerWithNaNSupport()),
+        ('zeros_to_nans', ZeroToNaNer()),
     ])
 
 
