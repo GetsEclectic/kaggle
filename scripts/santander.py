@@ -24,7 +24,6 @@ from xgboost import XGBRegressor
 def create_submission_file(my_pipeline, features):
     test = read_large_csv('../input/santander-value-prediction-challenge/test.csv')
     tst_leak = pd.read_csv('../input/leaky-rows/test_leak.csv')
-    test['leak'] = tst_leak['compiled_leak']
     test['log_leak'] = np.log1p(tst_leak['compiled_leak'])
 
     pipeline = create_pipeline()
@@ -73,7 +72,6 @@ def load_train():
     data.drop(['ID', 'target'], axis=1, inplace=True)
 
     leak = pd.read_csv('../input/leaky-rows/train_leak.csv')
-    data['leak'] = leak['compiled_leak'].values
     data['log_leak'] = np.log1p(leak['compiled_leak'].values)
 
     return data, target
@@ -85,15 +83,9 @@ def load_train_good_features():
     data.drop(['ID', 'target'], axis=1, inplace=True)
 
     leak = pd.read_csv('../input/leaky-rows/train_leak.csv')
-    data['leak'] = leak['compiled_leak'].values
     data['log_leak'] = np.log1p(leak['compiled_leak'].values)
 
-    feature_importance = pd.read_csv("../input/xgb-with-individual-features/feature_report.csv")
-    good_features = feature_importance.loc[feature_importance['rmse'] <= 0.7955].feature
-
-    features = good_features.tolist() + ['log_leak']
-
-    return data[features], target, features
+    return data, target
 
 
 def calculate_feature_importance():
@@ -130,7 +122,7 @@ def calculate_feature_importance():
 
 
 def xgb_with_important_features():
-    data, target, features = load_train_good_features()
+    data, target = load_train_good_features()
 
     pipeline = create_pipeline()
 
@@ -153,7 +145,7 @@ def xgb_with_important_features():
 
     print("rmse: " + str(score))
 
-    # create_submission_file(reg, features)
+    # create_submission_file(reg)
 
 
 def read_large_csv(filename):
@@ -166,7 +158,7 @@ def read_large_csv(filename):
 
 
 def lightgbm_with_important_features():
-    data, target, features = load_train_good_features()
+    data, target = load_train_good_features()
 
     pipeline = create_pipeline()
 
@@ -216,11 +208,11 @@ def lightgbm_with_important_features():
     print('OOF SCORE with LEAK : %9.6f'
           % (mean_squared_error(target, data['predictions']) ** .5))
 
-    # create_submission_file(clf, features)
+    # create_submission_file(clf)
 
 
 def bayes_search():
-    data, target, features = load_train_good_features()
+    data, target = load_train_good_features()
 
     pipeline = create_pipeline()
 
@@ -300,7 +292,7 @@ class StatisticsAdder(BaseEstimator, TransformerMixin):
         return X
 
 
-class ZerosToNans(BaseEstimator, TransformerMixin):
+class ZeroToNaNer(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         return self
 
@@ -309,15 +301,30 @@ class ZerosToNans(BaseEstimator, TransformerMixin):
         return X
 
 
+class ImportantFeatureFilter(BaseEstimator, TransformerMixin):
+    def __init__(self, rmseLimit=0.7955):
+        self.rmseLimit = rmseLimit
+        self.feature_importance = pd.read_csv("../input/xgb-with-individual-features/feature_report.csv")
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        good_features = self.feature_importance.loc[self.feature_importance['rmse'] <= 0.7955].feature
+        good_features = good_features.tolist() + ['log_leak']
+        return X[good_features]
+
+
 def create_pipeline():
     return Pipeline([
+        ('filter_important_features', ImportantFeatureFilter()),
         ('add_stats', StatisticsAdder(columns_to_exclude=['ID', 'leak', 'log_leak', 'target'])),
-        ('zeros_to_nans', ZerosToNans())
+        ('zeros_to_nans', ZeroToNaNer())
     ])
 
 
 def model_comparison():
-    data, target, features = load_train_good_features()
+    data, target = load_train_good_features()
 
     pipeline = create_pipeline()
 
