@@ -13,8 +13,10 @@ import sklearn.svm as svm
 import sklearn.tree as tree
 from scipy.stats import spearmanr
 from sklearn import model_selection
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics import mean_squared_error, make_scorer
 from sklearn.model_selection import KFold
+from sklearn.pipeline import Pipeline
 from skopt import BayesSearchCV
 from xgboost import XGBRegressor
 
@@ -25,18 +27,11 @@ def create_submission_file(my_pipeline, features):
     test['leak'] = tst_leak['compiled_leak']
     test['log_leak'] = np.log1p(tst_leak['compiled_leak'])
 
-    features = [f for f in features if f not in ['ID', 'leak', 'log_leak', 'target', 'log_leak', 'log_of_mean', 'mean_of_log', 'log_of_median', 'nb_nans', 'the_sum', 'the_std', 'the_kur']]
+    pipeline = create_pipeline()
 
-    test.replace(0, np.nan, inplace=True)
-    test['log_of_mean'] = np.log1p(test[features].replace(0, np.nan).mean(axis=1))
-    test['mean_of_log'] = np.log1p(test[features]).replace(0, np.nan).mean(axis=1)
-    test['log_of_median'] = np.log1p(test[features].replace(0, np.nan).median(axis=1))
-    test['nb_nans'] = test[features].isnull().sum(axis=1)
-    test['the_sum'] = np.log1p(test[features].sum(axis=1))
-    test['the_std'] = test[features].std(axis=1)
-    test['the_kur'] = test[features].kurtosis(axis=1)
+    test = pipeline.transform(test)
 
-    features = features + ['log_leak', 'log_of_mean', 'mean_of_log', 'log_of_median', 'nb_nans', 'the_sum', 'the_std', 'the_kur']
+    features = [f for f in features if f not in ['ID', 'leak', 'target']]
 
     preds = my_pipeline.predict(test[features])
 
@@ -96,20 +91,7 @@ def load_train_good_features():
     feature_importance = pd.read_csv("../input/xgb-with-individual-features/feature_report.csv")
     good_features = feature_importance.loc[feature_importance['rmse'] <= 0.7955].feature
 
-    # Use all features for stats
-    features = [f for f in data if f not in ['ID', 'leak', 'log_leak', 'target']]
-    data.replace(0, np.nan, inplace=True)
-    data['log_of_mean'] = np.log1p(data[features].replace(0, np.nan).mean(axis=1))
-    data['mean_of_log'] = np.log1p(data[features]).replace(0, np.nan).mean(axis=1)
-    data['log_of_median'] = np.log1p(data[features].replace(0, np.nan).median(axis=1))
-    data['nb_nans'] = data[features].isnull().sum(axis=1)
-    data['the_sum'] = np.log1p(data[features].sum(axis=1))
-    data['the_std'] = data[features].std(axis=1)
-    data['the_kur'] = data[features].kurtosis(axis=1)
-
-    # Only use good features, log leak and stats for training
-    features = good_features.tolist()
-    features = features + ['log_leak', 'log_of_mean', 'mean_of_log', 'log_of_median', 'nb_nans', 'the_sum', 'the_std', 'the_kur']
+    features = good_features.tolist() + ['log_leak']
 
     return data[features], target, features
 
@@ -150,6 +132,10 @@ def calculate_feature_importance():
 def xgb_with_important_features():
     data, target, features = load_train_good_features()
 
+    pipeline = create_pipeline()
+
+    data = pipeline.fit_transform(data)
+
     reg = XGBRegressor(colsample_bylevel= 0.861134571342863, colsample_bytree= 0.8549681199200161, gamma= 8.711600566125166e-06, learning_rate= 0.04074349135889144, max_delta_step= 9, max_depth= 5, min_child_weight= 1, n_estimators= 1000, reg_alpha= 1.4612464562771088e-06, reg_lambda= 0.13441711873251744, scale_pos_weight= 5.136942416966736, subsample= 0.4294081846730142)
     folds = KFold(n_splits=5, shuffle=True, random_state=1)
     fold_idx = [(trn_, val_) for trn_, val_ in folds.split(data)]
@@ -181,6 +167,10 @@ def read_large_csv(filename):
 
 def lightgbm_with_important_features():
     data, target, features = load_train_good_features()
+
+    pipeline = create_pipeline()
+
+    data = pipeline.fit_transform(data)
 
     dtrain = lgb.Dataset(data=data,
                          label=target, free_raw_data=False)
@@ -231,6 +221,10 @@ def lightgbm_with_important_features():
 
 def bayes_search():
     data, target, features = load_train_good_features()
+
+    pipeline = create_pipeline()
+
+    data = pipeline.fit_transform(data)
 
     nrmse_scorer = make_scorer(lambda x, y: rmse(x, y) * -1)
 
@@ -284,8 +278,50 @@ def bayes_search():
     result = bayes_cv_tuner.fit(data, target, callback=status_print)
 
 
+class StatisticsAdder(BaseEstimator, TransformerMixin):
+    columns_to_exclude = []
+
+    def __init__(self, columns_to_exclude):
+        self.columns_to_exclude = columns_to_exclude
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        features = [f for f in X if f not in self.columns_to_exclude]
+
+        X['log_of_mean'] = np.log1p(X[features].replace(0, np.nan).mean(axis=1))
+        X['mean_of_log'] = np.log1p(X[features]).replace(0, np.nan).mean(axis=1)
+        X['log_of_median'] = np.log1p(X[features].replace(0, np.nan).median(axis=1))
+        X['nb_nans'] = X[features].isnull().sum(axis=1)
+        X['the_sum'] = np.log1p(X[features].sum(axis=1))
+        X['the_std'] = X[features].std(axis=1)
+        X['the_kur'] = X[features].kurtosis(axis=1)
+        return X
+
+
+class ZerosToNans(BaseEstimator, TransformerMixin):
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        X.replace(0, np.nan, inplace=True)
+        return X
+
+
+def create_pipeline():
+    return Pipeline([
+        ('add_stats', StatisticsAdder(columns_to_exclude=['ID', 'leak', 'log_leak', 'target'])),
+        ('zeros_to_nans', ZerosToNans())
+    ])
+
+
 def model_comparison():
     data, target, features = load_train_good_features()
+
+    pipeline = create_pipeline()
+
+    data = pipeline.fit_transform(data)
 
     MLA = [
         #Ensemble Methods
