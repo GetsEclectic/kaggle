@@ -316,8 +316,14 @@ class StandardScalerWithNaNSupport(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X):
+        stds = self.stds
         X = X - self.means
-        X = X / self.stds
+        for feature in X:
+            if stds[0] != 0:
+                X[feature] = X[feature] / stds[0]
+
+            stds = stds[1:]
+
         return X
 
 
@@ -423,4 +429,4 @@ def model_comparison():
     print(MLA_compare)
 
 
-xgb_with_important_features()
+model_comparison()
